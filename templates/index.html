@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MailAI - Gestión de Correos</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+
+<div class="app">
+  <div class="sidebar">
+    <div class="logo">Mail<span>AI</span></div>
+    <div style="padding: 0 14px 10px; font-size: 12px; color: #8890aa;">{{ username }}</div>
+    <a href="/logout" style="margin: 0 12px 10px; padding: 7px; background: transparent; color: #8890aa; border: 1px solid #2a3148; border-radius: 8px; font-size: 12px; text-align: center; text-decoration: none; display: block;">Cerrar sesión</a>
+    <button class="compose-btn" onclick="showCompose()">+ Nuevo correo</button>
+    <div class="nav-section">Carpetas</div>
+    <div class="nav-item active" onclick="setFilter('all', this)">
+      <span>📥</span><span>Bandeja de entrada</span><span class="badge" id="badge-all">0</span>
+    </div>
+    <div class="nav-item" onclick="setFilter('urgente', this)">
+      <span>⚡</span><span>Urgente</span><span class="badge red" id="badge-urgente">0</span>
+    </div>
+    <div class="nav-item" onclick="setFilter('enviados', this)">
+      <span>📤</span><span>Enviados</span>
+    </div>
+    <div class="nav-section">Categorías</div>
+    <div class="nav-item" onclick="setFilter('soporte', this)"><span>🔧</span><span>Soporte</span></div>
+    <div class="nav-item" onclick="setFilter('ventas', this)"><span>💼</span><span>Ventas</span></div>
+    <div class="nav-item" onclick="setFilter('rrhh', this)"><span>👥</span><span>RRHH</span></div>
+    <div class="nav-item" onclick="setFilter('facturacion', this)"><span>💶</span><span>Facturación</span></div>
+  </div>
+
+  <div class="email-list-panel">
+    <div class="list-toolbar">
+      <input type="text" id="search" placeholder="Buscar..." oninput="renderList()">
+    </div>
+    <div class="email-list" id="email-list"></div>
+    <div class="stats-bar" id="stats-bar"></div>
+  </div>
+
+  <div class="detail">
+    <div id="detail-content">
+      <div class="empty-state">
+        <div class="empty-icon">📧</div>
+        <div>Selecciona un correo para ver su análisis</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="compose-overlay">
+  <div class="modal">
+    <h3>Nuevo correo</h3>
+    <div class="form-row"><label>Para</label><input type="text" id="c-to" placeholder="correo@empresa.com"></div>
+    <div class="form-row"><label>Asunto</label><input type="text" id="c-subject" placeholder="Asunto del correo"></div>
+    <div class="form-row"><label>Mensaje</label><textarea id="c-body" placeholder="Escribe tu mensaje..."></textarea></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="hideCompose()">Cancelar</button>
+      <button class="btn-confirm" onclick="submitCompose()">Enviar</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let emails = [], sent = [], selected = null, filter = 'all';
+
+const avatarColors = [
+  ['#e8f0ff','#1a56db'],
+  ['#e8f5e9','#2e7d32'],
+  ['#fff3e0','#b45309'],
+  ['#ffe8f5','#9d174d'],
+  ['#f0e8ff','#6d28d9']
+];
+
+function getInitials(name) {
+  if (!name) return '?';
+  return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+}
+
+async function loadEmails() {
+  const res = await fetch('/api/emails');
+  const data = await res.json();
+  emails = data.emails;
+  sent = data.sent;
+  renderList();
+  updateStats();
+}
+
+function setFilter(f, el) {
+  filter = f;
+  selected = null;
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  if (el) el.classList.add('active');
+  renderList();
+  showEmpty();
+}
+
+function filteredEmails() {
+  const q = document.getElementById('search').value.toLowerCase();
+  return emails.filter(e => {
+    if (filter === 'urgente') return e.priority === 'urgente';
+    if (filter === 'soporte') return e.category === 'soporte';
+    if (filter === 'ventas') return e.category === 'ventas';
+    if (filter === 'rrhh') return e.category === 'rrhh';
+    if (filter === 'facturacion') return e.category === 'facturacion';
+    if (filter === 'enviados') return false;
+    return true;
+  }).filter(e => !q || 
+    (e.subject && e.subject.toLowerCase().includes(q)) || 
+    (e.sender_name && e.sender_name.toLowerCase().includes(q))
+  );
+}
+
+function renderList() {
+  const list = document.getElementById('email-list');
+
+  if (filter === 'enviados') {
+    list.innerHTML = sent.length === 0
+      ? '<div class="no-emails">No hay correos enviados</div>'
+      : sent.map(s => `
+          <div class="sent-item">
+            <div class="sent-to">Para: ${s.to_email}</div>
+            <div class="sent-subject">${s.subject}</div>
+            <div class="sent-preview">${s.body}</div>
+          </div>`).join('');
+    return;
+  }
+
+  const items = filteredEmails();
+  if (items.length === 0) {
+    list.innerHTML = '<div class="no-emails">Sin correos</div>';
+    return;
+  }
+
+  list.innerHTML = items.map(e => {
+    const [bg, fg] = avatarColors[e.id % 5];
+    return `
+      <div class="email-item ${e.unread ? 'unread' : ''} ${selected === e.id ? 'selected' : ''}" onclick="selectEmail(${e.id})">
+        <div class="avatar" style="background:${bg};color:${fg}">${getInitials(e.sender_name)}</div>
+        <div class="e-info">
+          <div class="e-top">
+            <span class="e-sender">${e.sender_name}</span>
+            <span class="e-time">${e.time}</span>
+          </div>
+          <div class="e-subject">${e.subject}</div>
+          <div class="e-preview">${e.body ? e.body.slice(0, 60) : ''}...</div>
+          <div class="tags">
+            ${e.category ? `<span class="tag ${e.category}">${e.category}</span>` : ''}
+            ${e.priority ? `<span class="tag ${e.priority}">${e.priority === 'urgente' ? '⚡ urgente' : e.priority === 'normal' ? '✓ normal' : '↓ baja'}</span>` : ''}
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function updateStats() {
+  const urgente = emails.filter(e => e.priority === 'urgente').length;
+  const analizados = emails.filter(e => e.category).length;
+  document.getElementById('badge-urgente').textContent = urgente;
+  document.getElementById('badge-all').textContent = emails.filter(e => e.unread).length;
+  document.getElementById('stats-bar').innerHTML =
+    `<span class="stat"><strong>${emails.length}</strong> correos</span>
+     <span class="stat"><strong>${analizados}</strong> analizados</span>
+     <span class="stat"><strong>${urgente}</strong> urgentes</span>
+     <span class="stat"><strong>${sent.length}</strong> enviados</span>`;
+}
+
+function selectEmail(id) {
+  selected = id;
+  const e = emails.find(x => x.id === id);
+  if (!e) return;
+  e.unread = false;
+  renderList();
+  renderDetail(e);
+}
+
+function showEmpty() {
+  document.getElementById('detail-content').innerHTML = `
+    <div class="empty-state">
+      <div class="empty-icon">📧</div>
+      <div>Selecciona un correo para ver su análisis</div>
+    </div>`;
+}
+
+function renderDetail(e) {
+  const [bg, fg] = avatarColors[e.id % 5];
+  document.getElementById('detail-content').innerHTML = `
+    <div class="detail-header">
+      <div class="detail-header-inner">
+        <div class="avatar large" style="background:${bg};color:${fg}">${getInitials(e.sender_name)}</div>
+        <div>
+          <div class="detail-subject">${e.subject}</div>
+          <div class="detail-meta">${e.sender_name} &lt;${e.sender_email}&gt; · ${e.time}</div>
+        </div>
+      </div>
+    </div>
+    <div class="detail-body">
+      <div class="email-text">${e.body}</div>
+      ${e.category ? `
+        <div class="ai-section">
+          <div class="ai-card">
+            <div class="ai-card-label">Categoría</div>
+            <div class="ai-card-value"><span class="tag ${e.category}">${e.category}</span></div>
+          </div>
+          <div class="ai-card">
+            <div class="ai-card-label">Prioridad</div>
+            <div class="ai-card-value"><span class="tag ${e.priority}">${e.priority === 'urgente' ? '⚡ urgente' : e.priority === 'normal' ? '✓ normal' : '↓ baja'}</span></div>
+          </div>
+        </div>
+        <div class="ai-summary">${e.summary}</div>
+        <div class="response-label">Respuesta sugerida por IA:</div>
+        <textarea class="response-area" id="resp-${e.id}">${e.ai_response || ''}</textarea>
+        <div class="action-btns">
+          <button class="btn-regen" onclick="regenResponse(${e.id})">🔄 Regenerar</button>
+          <button class="btn-send" onclick="sendResp(${e.id})">Enviar respuesta</button>
+        </div>
+      ` : `
+        <button class="btn-analyze" id="analyze-btn-${e.id}" onclick="analyzeEmail(${e.id})">
+          🤖 Analizar con IA
+        </button>
+      `}
+    </div>`;
+}
+
+async function analyzeEmail(id) {
+  const btn = document.getElementById(`analyze-btn-${id}`);
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Analizando...'; }
+  const res = await fetch(`/api/emails/${id}/analyze`, { method: 'POST' });
+  const data = await res.json();
+  if (data.success) {
+    const idx = emails.findIndex(e => e.id === id);
+    if (idx !== -1) emails[idx] = data.email;
+    renderList();
+    updateStats();
+    renderDetail(data.email);
+    showToast('Correo analizado correctamente');
+  } else {
+    showToast('Error: ' + (data.error || 'No se pudo analizar'), true);
+    if (btn) { btn.disabled = false; btn.innerHTML = '🤖 Analizar con IA'; }
+  }
+}
+
+async function regenResponse(id) {
+  const ta = document.getElementById(`resp-${id}`);
+  if (!ta) return;
+  ta.value = 'Regenerando...';
+  const res = await fetch(`/api/emails/${id}/analyze`, { method: 'POST' });
+  const data = await res.json();
+  if (data.success) {
+    ta.value = data.email.ai_response;
+    emails[emails.findIndex(x => x.id === id)] = data.email;
+    showToast('Respuesta regenerada');
+  }
+}
+
+async function sendResp(id) {
+  const ta = document.getElementById(`resp-${id}`);
+  if (!ta || !ta.value.trim()) return;
+  await fetch(`/api/emails/${id}/send`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ response: ta.value })
+  });
+  const e = emails.find(x => x.id === id);
+  sent.unshift({ to_email: e.sender_email, subject: 'Re: ' + e.subject, body: ta.value, time: new Date().toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' }) });
+  updateStats();
+  showToast('Respuesta enviada');
+}
+
+function showCompose() { document.getElementById('compose-overlay').classList.add('show'); }
+function hideCompose() { document.getElementById('compose-overlay').classList.remove('show'); }
+
+async function submitCompose() {
+  const to = document.getElementById('c-to').value;
+  const subject = document.getElementById('c-subject').value;
+  const body = document.getElementById('c-body').value;
+  if (!to || !subject || !body) return;
+  await fetch('/api/compose', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ to, subject, body })
+  });
+  sent.unshift({ to_email: to, subject, body, time: new Date().toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' }) });
+  hideCompose();
+  updateStats();
+  showToast('Correo enviado');
+  document.getElementById('c-to').value = '';
+  document.getElementById('c-subject').value = '';
+  document.getElementById('c-body').value = '';
+}
+
+function showToast(msg, err = false) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.background = err ? '#e24b4a' : '#1a1f2e';
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+loadEmails();
+</script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MailAI - Iniciar sesión</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="auth-body">
+<div class="auth-container">
+  <div class="auth-card">
+    <div class="auth-logo">Mail<span>AI</span></div>
+    <h2 class="auth-title">Iniciar sesión</h2>
+    {% if error %}
+    <div class="auth-error">{{ error }}</div>
+    {% endif %}
+    <form method="POST">
+      <div class="form-row">
+        <label>Email</label>
+        <input type="email" name="email" placeholder="tucorreo@gmail.com" required>
+      </div>
+      <div class="form-row">
+        <label>Contraseña</label>
+        <input type="password" name="password" placeholder="••••••••" required>
+      </div>
+      <button type="submit" class="auth-btn">Entrar</button>
+    </form>
+    <p class="auth-link">¿No tienes cuenta? <a href="/register">Regístrate</a></p>
+  </div>
+</div>
+</body>
+</html>
